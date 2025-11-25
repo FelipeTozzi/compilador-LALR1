@@ -1,0 +1,24 @@
+%start Program
+
+Program -> StmtList
+
+StmtList -> Stmt StmtList
+StmtList -> eps
+
+Stmt -> Decl
+Stmt -> ExprStmt
+
+Decl -> VAR ID ASSIGN Expr SEMI
+ExprStmt -> Expr SEMI
+
+Expr -> Expr PLUS Term
+Expr -> Expr MINUS Term
+Expr -> Term
+
+Term -> Term TIMES Factor
+Term -> Term DIV Factor
+Term -> Factor
+
+Factor -> LPAREN Expr RPAREN
+Factor -> ID
+Factor -> NUM
