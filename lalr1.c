@@ -3,6 +3,7 @@
 // Limitações: buffers fixos, resolução de conflitos não automática.
 // Compile: gcc -O2 -std=c99 -o lalr_parser parser.c
 
+#define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +93,9 @@ int state_count = 0;
 
 ActionEntry ACTION[MAX_STATES][MAX_TERMINALS];
 int GOTO[MAX_STATES][MAX_NONTERMINALS];
+
+int term_sym_id[MAX_TERMINALS];
+int nonterm_sym_id[MAX_NONTERMINALS];
 
 // ----- Bitset helpers (for terminals only) -----
 static inline void set_bit(unsigned long long *bs, int i) {
@@ -193,22 +197,13 @@ void read_grammar(const char *fname) {
             p.left = left_id;
             p.rhs_len = 0;
             p.index = prod_count;
-            if(!tok) {
-                // empty production? interpret as epsilon
-                p.rhs_len = 1;
-                p.rhs[0] = add_symbol("eps", SYM_TERMINAL); // special terminal eps
-                set_bit(FIRST[ p.rhs[0] ], 0); // not used
-            } else {
+
+            if (tok) {
                 int i=0;
                 while(tok && i<MAX_RHS) {
-                    if(strcmp(tok, "eps")==0) {
-                        // epsilon marker
-                        p.rhs[i++] = add_symbol("eps", SYM_TERMINAL);
-                    } else {
-                        // determine if token is terminal or nonterm. We will assume tokens defined in %token are terminals; otherwise nonterm
+                    if(strcmp(tok, "eps") != 0) {
                         int sym = find_symbol(tok);
                         if(sym==-1) {
-                            // not defined yet: assume nonterminal
                             sym = add_symbol(tok, SYM_NONTERMINAL);
                         }
                         p.rhs[i++] = sym;
@@ -217,6 +212,7 @@ void read_grammar(const char *fname) {
                 }
                 p.rhs_len = i;
             }
+
             if(prod_count >= MAX_PRODS) { fprintf(stderr,"too many productions\n"); exit(1); }
             prods[prod_count++] = p;
         }
@@ -233,20 +229,19 @@ void read_grammar(const char *fname) {
     p.index = prod_count;
     prods[prod_count++] = p;
     augmented_start_prod = p.index;
-    // mark eps symbol as terminal (we'll treat specially)
-    int eps = find_symbol("eps");
-    if(eps==-1) {
-        eps = add_symbol("eps", SYM_TERMINAL);
-    } else {
-        sym_table[eps].type = SYM_TERMINAL;
-        is_terminal[eps]=1;
-    }
     // build nonterminal/terminal counts arrays
     // assign terminal indices (reassign)
     terminal_count = 0; nonterminal_count = 0;
     for(int i=0;i<symbol_count;i++) {
-        if(sym_table[i].type==SYM_TERMINAL) { term_id[i]=terminal_count++; is_terminal[i]=1; }
-        else { nonterm_id[i]=nonterminal_count++; is_terminal[i]=0; }
+        if(sym_table[i].type==SYM_TERMINAL) {
+            term_sym_id[terminal_count] = i;
+            term_id[i]=terminal_count++;
+            is_terminal[i]=1;
+        } else {
+            nonterm_sym_id[nonterminal_count] = i;
+            nonterm_id[i]=nonterminal_count++;
+            is_terminal[i]=0;
+        }
     }
 }
 
@@ -633,9 +628,9 @@ void build_parsing_table() {
                         if(test_bit(it.lookahead, t)) {
                             if(ACTION[s][t].type != ACTION_ERR) {
                                 // conflict (report)
-                                const char *tname = (t >= 0 && t < symbol_count) ? sym_table[t].name : "?";
-                                fprintf(stderr,"Conflict at state %d on terminal %d (%s): existing action type %d, trying REDUCE prod %d\n",
-                                        s, t, tname, ACTION[s][t].type, it.prod);
+                                const char *tname = sym_table[term_sym_id[t]].name;
+                                fprintf(stderr,"Conflict at state %d on terminal %s: existing action type %d, trying REDUCE prod %d\n",
+                                        s, tname, ACTION[s][t].type, it.prod);
                                 // we don't override
                             } else {
                                 ACTION[s][t].type = ACTION_REDUCE;
@@ -671,6 +666,20 @@ void print_tree(Node *n, int depth) {
     if(n->lexeme) printf(" (%s)", n->lexeme);
     printf("\n");
     for(int i=0;i<n->child_count;i++) print_tree(n->children[i], depth+1);
+}
+
+void free_tree(Node *n) {
+    if (!n) return;
+    for (int i = 0; i < n->child_count; i++) {
+        free_tree(n->children[i]);
+    }
+    if (n->children) {
+        free(n->children);
+    }
+    if (n->lexeme) {
+        free(n->lexeme);
+    }
+    free(n);
 }
 
 // ----- Parser runtime that uses ACTION/GOTO (reads token stream file) -----
@@ -730,8 +739,7 @@ void parse_input(const char *tokfile) {
                 }
             }
             // pop k states
-            for(int i=0;i<k;i--) { /* no-op for clarity */ break; }
-            for(int i=0;i<k;i++) { top--; }
+            top -= k;
             Node *nnode = make_node_with_children(p->left, kids, k);
             // goto
             int curstate = stck_state[top];
@@ -747,13 +755,17 @@ void parse_input(const char *tokfile) {
             if(k>0) free(kids);
         } else if(act.type == ACTION_ACCEPT) {
             printf("Parse succeeded. Constructed parse tree:\n");
-            Node *root = stck_node[1]; // root at position 1 (0 is initial no node)
-            if(!root) {
-                // find non-null
-                for(int i=0;i<=top;i++) if(stck_node[i]) { root = stck_node[i]; break; }
+            Node *root = NULL;
+            // The root is the single node on the stack after the augmented production is reduced
+            if (top > 0) {
+                root = stck_node[top];
             }
-            if(root) print_tree(root, 0);
-            else printf("(empty tree)\n");
+            if (root) {
+                print_tree(root, 0);
+                free_tree(root);
+            } else {
+                printf("(empty tree)\n");
+            }
             return;
         } else {
             fprintf(stderr,"Parse error at token %s (state %d)\n", sym_table[a].name, state);
@@ -777,7 +789,7 @@ void dump_tables() {
             }
             if(it->dot == p->rhs_len) printf(" .");
             printf("    [");
-            for(int t=0;t<terminal_count;t++) if(test_bit(it->lookahead, t)) printf(" %s", sym_table[ (t<symbol_count? t:0) ].name);
+            for(int t=0;t<terminal_count;t++) if(test_bit(it->lookahead, t)) printf(" %s", sym_table[term_sym_id[t]].name);
             printf(" ]\n");
         }
     }
@@ -785,7 +797,7 @@ void dump_tables() {
     for(int s=0;s<state_count;s++) {
         for(int t=0;t<terminal_count;t++) {
             if(ACTION[s][t].type != ACTION_ERR) {
-                printf(" ACTION[%d][%s] = ", s, sym_table[ (t<symbol_count? t:0) ].name);
+                printf(" ACTION[%d][%s] = ", s, sym_table[term_sym_id[t]].name);
                 if(ACTION[s][t].type==ACTION_SHIFT) printf("shift %d\n", ACTION[s][t].value);
                 else if(ACTION[s][t].type==ACTION_REDUCE) printf("reduce %d (%s -> ...)\n", ACTION[s][t].value, sym_table[ prods[ACTION[s][t].value].left ].name);
                 else if(ACTION[s][t].type==ACTION_ACCEPT) printf("accept\n");
@@ -794,8 +806,8 @@ void dump_tables() {
     }
     printf("GOTO table (partial):\n");
     for(int s=0;s<state_count;s++) {
-        for(int A=0;A<nonterminal_count;A++) if(GOTO[s][A]>=0) {
-            printf(" GOTO[%d][%s] = %d\n", s, sym_table[ (A<symbol_count? A:0) ].name, GOTO[s][A]);
+        for(int n=0;n<nonterminal_count;n++) if(GOTO[s][n]>=0) {
+            printf(" GOTO[%d][%s] = %d\n", s, sym_table[nonterm_sym_id[n]].name, GOTO[s][n]);
         }
     }
 }
