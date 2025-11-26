@@ -6,11 +6,6 @@ Alunos: Felipe Tozzi Marinho de Oliveira <br>
         Pedro Firmani   <br>
 
         para rodar isso aqui você tem que colocar no terminal CMD
-        isso -> ".\lalr1.exe grammar.txt input.tokens"
-
-        <br>
-
-        As regras (header) estão na na parte antes da anotação
-        // ----- Globals -----
+        isso -> ".\lalr1.exe grammar.txt input.tokens" 
 
         
