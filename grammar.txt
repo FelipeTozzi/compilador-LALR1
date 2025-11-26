@@ -1,14 +1,13 @@
-%token NUM PLUS MINUS TIMES DIV LPAREN RPAREN
+%token id num + * ( )
 
 %start E
 
-E -> E PLUS T
-E -> E MINUS T
+E -> E + T
 E -> T
 
-T -> T TIMES F
-T -> T DIV F
+T -> T * F
 T -> F
 
-F -> LPAREN E RPAREN
-F -> NUM
+F -> ( E )
+F -> id
+F -> num

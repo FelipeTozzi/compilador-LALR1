@@ -1,8 +1,10 @@
-LPAREN
-NUM
-PLUS
-NUM
-RPAREN
-TIMES
-NUM
+id
++
+id
+*
+(
+id
++
+num
+)
 $
